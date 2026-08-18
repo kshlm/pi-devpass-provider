@@ -6,7 +6,16 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatBalance, isCacheFresh, isChatModel, readCacheFrom, resolveBaseUrl, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
+import { formatBalance, isCacheFresh, isChatModel, isDevpassModel, keyFromAuthEntry, readCacheFrom, resolveBaseUrl, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
+
+// keyFromAuthEntry — auth.json shapes: oauth ({access}) and manual api_key ({key})
+assert.equal(keyFromAuthEntry({ type: "oauth", access: "llmgtwy_a", refresh: "llmgtwy_a", expires: 1 }), "llmgtwy_a");
+assert.equal(keyFromAuthEntry({ type: "api_key", key: "llmgtwy_b" }), "llmgtwy_b");
+assert.equal(keyFromAuthEntry({ type: "oauth", access: "  llmgtwy_c  \n" }), "llmgtwy_c", "trimmed");
+assert.equal(keyFromAuthEntry({ type: "oauth", access: "" }), undefined, "empty access");
+assert.equal(keyFromAuthEntry({}), undefined);
+assert.equal(keyFromAuthEntry(undefined), undefined);
+assert.equal(keyFromAuthEntry("nope"), undefined);
 
 // resolveBaseUrl precedence: env > models.json > default
 assert.equal(resolveBaseUrl(undefined, undefined), "https://api.llmgateway.io/v1");
@@ -101,6 +110,14 @@ assert.equal(
 assert.equal(formatBalance({ usage: "3.5", limit: "10" }), "$3.50/$10 used");
 assert.equal(formatBalance({ devPlan: "none" }), "");
 assert.equal(formatBalance(undefined), "");
+
+// isDevpassModel — status line / balance only while this provider is active
+assert.equal(isDevpassModel({ provider: "devpass" }), true);
+assert.equal(isDevpassModel({ provider: "anthropic" }), false);
+assert.equal(isDevpassModel({ provider: "openai" }), false);
+assert.equal(isDevpassModel({}), false);
+assert.equal(isDevpassModel(undefined), false);
+assert.equal(isDevpassModel(null), false);
 
 // cache: round-trip, freshness, corruption, schema version
 const cachePath = join(mkdtempSync(join(tmpdir(), "devpass-cache-")), "cache.json");

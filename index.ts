@@ -4,11 +4,12 @@
  * Registers a "devpass" provider (OpenAI-compatible, https://api.llmgateway.io/v1)
  * whose models and $/M rates are fetched from GET /v1/models (24h on-disk cache,
  * stale-fallback on network failure) and surfaces the DevPass credit balance
- * (GET /v1/key) in the status line.
+ * (GET /v1/key) in the status line — only while a `devpass/*` model is active.
  *
  * Setup:
- *   export LL_GATEWAY_API_KEY=llmgtwy_...   # DevPass plan key from https://devpass.llmgateway.io
  *   pi -e /path/to/pi-devpass-provider
+ *   /login devpass        # paste your DevPass key (llmgtwy_...) — stored in ~/.pi/agent/auth.json
+ *   (or) export LLM_GATEWAY_API_KEY=llmgtwy_...   # DevPass plan key from https://devpass.llmgateway.io
  * Then pick a model with /model (root ids like `claude-sonnet-4-5` — DevPass
  * keys cannot use provider-pinned ids) and check /devpass for the balance.
  */
@@ -18,12 +19,15 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 
 const PROVIDER_ID = "devpass";
 const DEFAULT_BASE_URL = "https://api.llmgateway.io/v1";
 const API_KEY_ENV = "LLM_GATEWAY_API_KEY";
 const FETCH_TIMEOUT_MS = 15_000;
+// Static gateway key: no expiry, so park `expires` far out and refresh is identity.
+const TOKEN_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000;
 
 /** baseUrl precedence: LL_GATEWAY_BASE_URL env > models.json providers.devpass.baseUrl > default. */
 export function resolveBaseUrl(env: string | undefined, modelsJson: string | undefined): string {
@@ -155,6 +159,20 @@ export function formatBalance(d: GwKeyStatus["data"]): string {
 	return "";
 }
 
+/** True when the active model belongs to this provider. */
+export function isDevpassModel(model?: { provider?: string } | null): boolean {
+	return model?.provider === PROVIDER_ID;
+}
+
+/** Extract the key string from an auth.json entry (oauth `access` or api_key `key`). */
+export function keyFromAuthEntry(e: unknown): string | undefined {
+	if (typeof e !== "object" || e === null) return;
+	const { access, key } = e as { access?: unknown; key?: unknown };
+	for (const v of [access, key]) {
+		if (typeof v === "string" && v.trim()) return v.trim();
+	}
+}
+
 // --- Gateway client ---
 
 async function gwFetch<T>(path: string, apiKey?: string, signal?: AbortSignal): Promise<T> {
@@ -208,13 +226,22 @@ export async function writeCacheTo(path: string, models: PiModelConfig[]): Promi
 
 // --- Extension ---
 
-export default async function devpassProvider(pi: ExtensionAPI) {
-	const apiKey = process.env[API_KEY_ENV];
+/** Saved `/login devpass` token from ~/.pi/agent/auth.json (re-read per call: works right after login). */
+function readSavedKey(): string | undefined {
+	try {
+		return keyFromAuthEntry(JSON.parse(readFileSync(join(homedir(), ".pi", "agent", "auth.json"), "utf8"))?.[PROVIDER_ID]);
+	} catch {
+		return; // missing/corrupt auth.json — env var still applies
+	}
+}
 
+/** Key precedence mirrors pi: auth.json (/login) > env var. Used for balance + catalog fetches. */
+const currentApiKey = () => readSavedKey() ?? process.env[API_KEY_ENV];
+
+export default async function devpassProvider(pi: ExtensionAPI) {
 	let models: PiModelConfig[] = [];
 	let loadError: string | undefined;
 	let fromCache = false;
-
 	// /v1/models is public — the key is only needed for streaming and balance.
 	// Fresh cache short-circuits the network; stale cache beats an empty list.
 	const cached = await readCacheFrom(CACHE_FILE);
@@ -223,7 +250,7 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 		fromCache = true;
 	} else {
 		try {
-			models = await fetchCatalog(AbortSignal.timeout(FETCH_TIMEOUT_MS), apiKey);
+			models = await fetchCatalog(AbortSignal.timeout(FETCH_TIMEOUT_MS), currentApiKey());
 			await writeCacheTo(CACHE_FILE, models);
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : String(e);
@@ -240,49 +267,90 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 		// `pi update --models` (and /models refresh): re-fetch the live catalog,
 		// replacing the startup list and updating the on-disk cache.
 		async refreshModels({ signal }) {
-			models = await fetchCatalog(signal, process.env[API_KEY_ENV]);
+			models = await fetchCatalog(signal, currentApiKey());
 			fromCache = false;
 			await writeCacheTo(CACHE_FILE, models);
 			return models;
 		},
+		// `/login devpass`: prompt for the gateway key, verify it, persist as credentials.
+		oauth: {
+			name: "LLM Gateway (DevPass)",
+			async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+				const key = (await callbacks.onPrompt({ message: "LLM Gateway API key (llmgtwy_…):" })).trim();
+				if (!key) throw new Error("Login cancelled");
+				callbacks.onProgress?.(`devpass: verifying key against ${BASE_URL}/key…`);
+				try {
+					await gwFetch<GwKeyStatus>("/key", key);
+				} catch (e) {
+					throw new Error(`Key rejected: ${e instanceof Error ? e.message : String(e)}`);
+				}
+				return { refresh: key, access: key, expires: Date.now() + TOKEN_TTL_MS };
+			},
+			async refreshToken(credentials) {
+				return credentials; // static key — never actually expires
+			},
+			getApiKey: (credentials) => credentials.access,
+		},
 	});
 
 	async function fetchBalance(): Promise<GwKeyStatus["data"] | undefined> {
-		if (!apiKey) return;
+		const key = currentApiKey();
+		if (!key) return;
 		try {
-			return (await gwFetch<GwKeyStatus>("/key", apiKey)).data;
+			return (await gwFetch<GwKeyStatus>("/key", key)).data;
 		} catch {
 			return; // ponytail: silent — status line just keeps the last known balance
 		}
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
+	let lastBalance = "";
+
+	function statusLine(ui: ExtensionContext["ui"]): string {
 		const parts = [`${models.length} devpass models${fromCache ? " (cached)" : ""}`];
-		if (!apiKey) parts.push(`${API_KEY_ENV} not set — requests will fail`);
+		if (!currentApiKey()) parts.push(`no key — /login devpass (or set ${API_KEY_ENV})`);
 		if (loadError) parts.push(loadError);
-		const balance = formatBalance(await fetchBalance());
-		if (balance) parts.push(balance);
-		ctx.ui.setStatus(PROVIDER_ID, ctx.ui.theme.fg("dim", parts.join(" · ")));
-	});
+		if (lastBalance) parts.push(lastBalance);
+		return ui.theme.fg("dim", parts.join(" · "));
+	}
+
+	// Status (catalog count + balance) only while a devpass model is active.
+	async function paintStatus(
+		model: { provider?: string } | null | undefined,
+		ui: ExtensionContext["ui"],
+		refresh = false,
+	) {
+		if (!isDevpassModel(model)) {
+			ui.setStatus(PROVIDER_ID, undefined);
+			return;
+		}
+		if (refresh) {
+			const next = formatBalance(await fetchBalance());
+			if (next) lastBalance = next; // keep last known on fail
+		}
+		ui.setStatus(PROVIDER_ID, statusLine(ui));
+	}
+
+	pi.on("session_start", (_event, ctx) => paintStatus(ctx.model, ctx.ui, true));
+	pi.on("model_select", (event, ctx) => paintStatus(event.model, ctx.ui, true));
 
 	// event.message is the finalized assistant message — typed provider access
 	// (verified live: /v1/models uses per-token sci-notation pricing)
-	pi.on("turn_end", async (event, ctx) => {
+	pi.on("turn_end", (event, ctx) => {
 		if (event.message.role !== "assistant" || event.message.provider !== PROVIDER_ID) return;
-		const balance = formatBalance(await fetchBalance());
-		if (balance) ctx.ui.setStatus(PROVIDER_ID, ctx.ui.theme.fg("dim", balance));
+		return paintStatus(ctx.model, ctx.ui, true);
 	});
 
 	pi.registerCommand("devpass", {
 		description: "Show DevPass credit balance and refresh the status line",
 		handler: async (_args, ctx) => {
-			if (!apiKey) {
-				ctx.ui.notify(`devpass: set ${API_KEY_ENV} to use this provider.`, "error");
+			if (!currentApiKey()) {
+				ctx.ui.notify(`devpass: /login devpass first (or set ${API_KEY_ENV}).`, "error");
 				return;
 			}
 			try {
 				const d = await fetchBalance();
 				const balance = formatBalance(d);
+				if (balance) lastBalance = balance;
 				const lines = [
 					d?.label ? `Key: ${d.label}` : null,
 					d?.devPlan && d.devPlan !== "none" ? `Dev plan: ${d.devPlan}` : null,
@@ -291,7 +359,7 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 					d?.usage ? `Key usage: $${d.usage}` : null,
 					`Models loaded: ${models.length}`,
 				].filter((l): l is string => l !== null);
-				if (balance) ctx.ui.setStatus(PROVIDER_ID, ctx.ui.theme.fg("dim", balance));
+				await paintStatus(ctx.model, ctx.ui); // paints only if a devpass model is active
 				ctx.ui.notify(lines.join("\n"), "info");
 			} catch (e) {
 				ctx.ui.notify(`devpass: ${e instanceof Error ? e.message : String(e)}`, "error");
