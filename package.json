@@ -1,0 +1,23 @@
+{
+	"name": "pi-devpass-provider",
+	"version": "0.1.0",
+	"description": "pi extension: LLM Gateway / DevPass provider with auto-fetched models, rates, and credit balance",
+	"type": "module",
+	"keywords": ["pi-package"],
+	"scripts": {
+		"check": "tsc --noEmit && node selfcheck.ts"
+	},
+	"pi": {
+		"extensions": ["./index.ts"]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"@types/node": "*",
+		"typescript": "^5"
+	}
+}
