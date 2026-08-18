@@ -6,7 +6,16 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatBalance, isCacheFresh, isChatModel, readCacheFrom, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
+import { formatBalance, isCacheFresh, isChatModel, readCacheFrom, resolveBaseUrl, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
+
+// resolveBaseUrl precedence: env > models.json > default
+assert.equal(resolveBaseUrl(undefined, undefined), "https://api.llmgateway.io/v1");
+assert.equal(resolveBaseUrl("", ""), "https://api.llmgateway.io/v1");
+assert.equal(resolveBaseUrl(undefined, '{"providers":{"devpass":{"baseUrl":"https://gw.self/v1"}}}'), "https://gw.self/v1");
+assert.equal(resolveBaseUrl("http://env:9", '{"providers":{"devpass":{"baseUrl":"https://gw.self/v1"}}}'), "http://env:9", "env wins over file");
+assert.equal(resolveBaseUrl(undefined, '{"providers":{"other":{"baseUrl":"https://x"}}}'), "https://api.llmgateway.io/v1");
+assert.equal(resolveBaseUrl(undefined, '{"providers":{"devpass":{}}}'), "https://api.llmgateway.io/v1");
+assert.equal(resolveBaseUrl(undefined, "not json"), "https://api.llmgateway.io/v1", "corrupt file ignored");
 
 // toPerMillion — gateway sends USD-per-token scientific notation
 assert.equal(toPerMillion("5e-6"), 5);

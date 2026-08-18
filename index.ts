@@ -15,14 +15,33 @@
 
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const PROVIDER_ID = "devpass";
-const BASE_URL = process.env.LLM_GATEWAY_BASE_URL ?? "https://api.llmgateway.io/v1";
+const DEFAULT_BASE_URL = "https://api.llmgateway.io/v1";
 const API_KEY_ENV = "LLM_GATEWAY_API_KEY";
 const FETCH_TIMEOUT_MS = 15_000;
+
+/** baseUrl precedence: LL_GATEWAY_BASE_URL env > models.json providers.devpass.baseUrl > default. */
+export function resolveBaseUrl(env: string | undefined, modelsJson: string | undefined): string {
+	const fromEnv = env?.trim();
+	if (fromEnv) return fromEnv;
+	try {
+		const fromFile = (JSON.parse(modelsJson ?? "")?.providers?.[PROVIDER_ID]?.baseUrl ?? "").trim?.() ?? "";
+		if (fromFile) return fromFile;
+	} catch {
+		// corrupt/missing models.json — pi itself will surface that; fall through
+	}
+	return DEFAULT_BASE_URL;
+}
+
+const BASE_URL = resolveBaseUrl(
+	process.env.LLM_GATEWAY_BASE_URL,
+	readFileSync(join(homedir(), ".pi", "agent", "models.json"), "utf8"),
+);
 // per-base-URL cache file: self-hosted gateways must not be served the cloud catalog
 const CACHE_FILE = join(
 	homedir(),
