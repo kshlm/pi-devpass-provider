@@ -240,20 +240,16 @@ const currentApiKey = () => readSavedKey() ?? process.env[API_KEY_ENV];
 
 export default async function devpassProvider(pi: ExtensionAPI) {
 	let models: PiModelConfig[] = [];
-	let loadError: string | undefined;
-	let fromCache = false;
 	// /v1/models is public — the key is only needed for streaming and balance.
 	// Fresh cache short-circuits the network; stale cache beats an empty list.
 	const cached = await readCacheFrom(CACHE_FILE);
 	if (cached && isCacheFresh(cached)) {
 		models = cached.models;
-		fromCache = true;
 	} else {
 		try {
 			models = await fetchCatalog(AbortSignal.timeout(FETCH_TIMEOUT_MS), currentApiKey());
 			await writeCacheTo(CACHE_FILE, models);
-		} catch (e) {
-			loadError = e instanceof Error ? e.message : String(e);
+		} catch {
 			if (cached) models = cached.models;
 		}
 	}
@@ -268,7 +264,6 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 		// replacing the startup list and updating the on-disk cache.
 		async refreshModels({ signal }) {
 			models = await fetchCatalog(signal, currentApiKey());
-			fromCache = false;
 			await writeCacheTo(CACHE_FILE, models);
 			return models;
 		},
@@ -305,15 +300,11 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 
 	let lastBalance = "";
 
-	function statusLine(ui: ExtensionContext["ui"]): string {
-		const parts = [`${models.length} devpass models${fromCache ? " (cached)" : ""}`];
-		if (!currentApiKey()) parts.push(`no key — /login devpass (or set ${API_KEY_ENV})`);
-		if (loadError) parts.push(loadError);
-		if (lastBalance) parts.push(lastBalance);
-		return ui.theme.fg("dim", parts.join(" · "));
+	function statusLine(ui: ExtensionContext["ui"]): string | undefined {
+		return lastBalance ? ui.theme.fg("dim", `devpass balance ${lastBalance}`) : undefined;
 	}
 
-	// Status (catalog count + balance) only while a devpass model is active.
+	// Status (balance only) only while a devpass model is active.
 	async function paintStatus(
 		model: { provider?: string } | null | undefined,
 		ui: ExtensionContext["ui"],

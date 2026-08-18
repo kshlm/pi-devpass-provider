@@ -3,7 +3,8 @@
 pi extension package that registers a **`devpass` model provider** backed by LLM
 Gateway, following https://llmgateway.io/guides/pi. Models and $/M rates are
 auto-fetched at startup; the DevPass credit balance (and loaded-model count) is
-shown in the status line only while a `devpass/*` model is active, and via `/devpass`.
+shown as `devpass balance $<balance>` in the status line only while a
+`devpass/*` model is active, and via `/devpass`.
 
 ## Layout
 
@@ -58,8 +59,8 @@ shown in the status line only while a `devpass/*` model is active, and via `/dev
   rewrites the cache file.
 - No/invalid key never crashes pi: provider registers with zero models and the
   status line carries the error (only while a `devpass` model is active).
-- Status line (catalog count + balance) is shown only while the active model
-  is `devpass/*`. Cleared on `model_select` away from this provider.
+- Status line (`devpass balance $<balance>`) is shown only while the active
+  model is `devpass/*`. Cleared on `model_select` away from this provider.
 - Balance refresh: `session_start` / `model_select` (when active model is
   `devpass`), `turn_end` (assistant message from this provider), and `/devpass`.
   Failed refreshes keep the last known balance silently. `/devpass` still
