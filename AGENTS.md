@@ -44,11 +44,16 @@ and via `/devpass`.
 - The extension factory is `async`: pi waits for it, so fetched models are
   available during interactive startup and to `pi --list-models`.
 - `refreshModels` is registered on the provider config, so `pi update --models`
-  (and any model refresh) re-fetches the live catalog without a restart. The
-  refreshed list is not persisted — startup refetches anyway.
+  (and any model refresh) re-fetches the live catalog without a restart and
+  rewrites the cache file.
 - No/invalid key never crashes pi: provider registers with zero models and the
   status line carries the error.
 - Balance refresh: `session_start`, `turn_end` (only when the active model's
   provider is `devpass`), and `/devpass`. Failed refreshes keep the last known
   balance silently.
 - Rates are display/cost-tracking only — the gateway bills, pi just meters.
+- Catalog cache: `~/.pi/agent/cache/devpass-models.json`, 24h TTL. Fresh cache
+  serves startup with no network; fetch failure falls back to stale cache;
+  successful fetches and refreshes rewrite it. `/v1/models` is public, so the
+  catalog loads even without `LLM_GATEWAY_API_KEY` (status line warns; requests
+  still need the key).

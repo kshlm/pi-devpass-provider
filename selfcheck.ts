@@ -3,7 +3,10 @@
  * Run: npm run check  (or: node selfcheck.ts — Node >= 22.6 strips types natively)
  */
 import assert from "node:assert/strict";
-import { formatBalance, isChatModel, toPerMillion, toPiModel } from "./index.ts";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { formatBalance, isCacheFresh, isChatModel, readCacheFrom, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
 
 // toPerMillion — gateway sends USD-per-token scientific notation
 assert.equal(toPerMillion("5e-6"), 5);
@@ -89,5 +92,21 @@ assert.equal(
 assert.equal(formatBalance({ usage: "3.5", limit: "10" }), "$3.50/$10 used");
 assert.equal(formatBalance({ devPlan: "none" }), "");
 assert.equal(formatBalance(undefined), "");
+
+// cache: round-trip, freshness, corruption, schema version
+const cachePath = join(mkdtempSync(join(tmpdir(), "devpass-cache-")), "cache.json");
+assert.equal(await readCacheFrom(cachePath), undefined, "missing file → undefined");
+const sample = [toPiModel({ id: "x", pricing: { prompt: "3e-6", completion: "15e-6" } })];
+await writeCacheTo(cachePath, sample);
+const entry = await readCacheFrom(cachePath);
+assert.ok(entry, "round-trip readable");
+assert.deepEqual(entry.models, sample, "round-trip preserves models");
+assert.ok(isCacheFresh(entry), "fresh just after write");
+assert.ok(!isCacheFresh({ ...entry, fetchedAt: Date.now() - 25 * 3600_000 }), "stale after 24h TTL");
+assert.ok(!isCacheFresh(undefined), "missing entry not fresh");
+writeFileSync(cachePath, "{corrupt json");
+assert.equal(await readCacheFrom(cachePath), undefined, "corrupt → undefined");
+writeFileSync(cachePath, JSON.stringify({ v: 99, fetchedAt: Date.now(), models: [] }));
+assert.equal(await readCacheFrom(cachePath), undefined, "schema version mismatch → undefined");
 
 console.log("selfcheck passed");

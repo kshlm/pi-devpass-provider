@@ -2,8 +2,9 @@
  * pi-devpass-provider — LLM Gateway / DevPass model provider for pi.
  *
  * Registers a "devpass" provider (OpenAI-compatible, https://api.llmgateway.io/v1)
- * whose models and $/M rates are fetched live from GET /v1/models at startup,
- * and surfaces the DevPass credit balance (GET /v1/key) in the status line.
+ * whose models and $/M rates are fetched from GET /v1/models (24h on-disk cache,
+ * stale-fallback on network failure) and surfaces the DevPass credit balance
+ * (GET /v1/key) in the status line.
  *
  * Setup:
  *   export LL_GATEWAY_API_KEY=llmgtwy_...   # DevPass plan key from https://devpass.llmgateway.io
@@ -12,12 +13,18 @@
  * keys cannot use provider-pinned ids) and check /devpass for the balance.
  */
 
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const PROVIDER_ID = "devpass";
 const BASE_URL = "https://api.llmgateway.io/v1";
 const API_KEY_ENV = "LLM_GATEWAY_API_KEY";
 const FETCH_TIMEOUT_MS = 15_000;
+const CACHE_FILE = join(homedir(), ".pi", "agent", "cache", "devpass-models.json");
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CACHE_V = 1;
 
 // --- Gateway API shapes (subset of fields we consume) ---
 
@@ -123,9 +130,9 @@ export function formatBalance(d: GwKeyStatus["data"]): string {
 
 // --- Gateway client ---
 
-async function gwFetch<T>(path: string, apiKey: string, signal?: AbortSignal): Promise<T> {
+async function gwFetch<T>(path: string, apiKey?: string, signal?: AbortSignal): Promise<T> {
 	const res = await fetch(`${BASE_URL}${path}`, {
-		headers: { Authorization: `Bearer ${apiKey}` },
+		headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, // /v1/models is public
 		signal: signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
 	if (!res.ok) {
@@ -135,9 +142,41 @@ async function gwFetch<T>(path: string, apiKey: string, signal?: AbortSignal): P
 }
 
 /** Live catalog: fetch, filter to chat models, map to pi model configs. */
-async function fetchCatalog(apiKey: string, signal: AbortSignal) {
+async function fetchCatalog(signal: AbortSignal, apiKey?: string) {
 	const payload = await gwFetch<{ data: GwModel[] }>("/models?exclude_deprecated=true", apiKey, signal);
 	return (payload.data ?? []).filter(isChatModel).map(toPiModel);
+}
+
+// --- Catalog cache (~/.pi/agent/cache/devpass-models.json) ---
+
+type PiModelConfig = ReturnType<typeof toPiModel>;
+
+interface CacheEntry {
+	v: number;
+	fetchedAt: number;
+	models: PiModelConfig[];
+}
+
+export function isCacheFresh(entry: CacheEntry | undefined | null, now = Date.now()): boolean {
+	return !!entry && now - entry.fetchedAt < CACHE_TTL_MS;
+}
+
+export async function readCacheFrom(path: string): Promise<CacheEntry | undefined> {
+	try {
+		const entry = JSON.parse(await readFile(path, "utf8")) as CacheEntry;
+		return entry.v === CACHE_V && Array.isArray(entry.models) ? entry : undefined;
+	} catch {
+		return; // missing or corrupt — treat as no cache
+	}
+}
+
+export async function writeCacheTo(path: string, models: PiModelConfig[]): Promise<void> {
+	try {
+		await mkdir(dirname(path), { recursive: true });
+		await writeFile(path, JSON.stringify({ v: CACHE_V, fetchedAt: Date.now(), models }));
+	} catch {
+		// ponytail: cache write failure is non-fatal — next run refetches
+	}
 }
 
 // --- Extension ---
@@ -145,16 +184,23 @@ async function fetchCatalog(apiKey: string, signal: AbortSignal) {
 export default async function devpassProvider(pi: ExtensionAPI) {
 	const apiKey = process.env[API_KEY_ENV];
 
-	let models: Awaited<ReturnType<typeof fetchCatalog>> = [];
+	let models: PiModelConfig[] = [];
 	let loadError: string | undefined;
+	let fromCache = false;
 
-	if (!apiKey) {
-		loadError = `${API_KEY_ENV} not set (key: https://devpass.llmgateway.io)`;
+	// /v1/models is public — the key is only needed for streaming and balance.
+	// Fresh cache short-circuits the network; stale cache beats an empty list.
+	const cached = await readCacheFrom(CACHE_FILE);
+	if (cached && isCacheFresh(cached)) {
+		models = cached.models;
+		fromCache = true;
 	} else {
 		try {
-			models = await fetchCatalog(apiKey, AbortSignal.timeout(FETCH_TIMEOUT_MS));
+			models = await fetchCatalog(AbortSignal.timeout(FETCH_TIMEOUT_MS), apiKey);
+			await writeCacheTo(CACHE_FILE, models);
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : String(e);
+			if (cached) models = cached.models;
 		}
 	}
 
@@ -165,11 +211,11 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 		api: "openai-completions",
 		models,
 		// `pi update --models` (and /models refresh): re-fetch the live catalog,
-		// replacing the startup list. Not persisted — next startup refetches anyway.
+		// replacing the startup list and updating the on-disk cache.
 		async refreshModels({ signal }) {
-			const key = process.env[API_KEY_ENV];
-			if (!key) throw new Error(`${API_KEY_ENV} not set (key: https://devpass.llmgateway.io)`);
-			models = await fetchCatalog(key, signal);
+			models = await fetchCatalog(signal, process.env[API_KEY_ENV]);
+			fromCache = false;
+			await writeCacheTo(CACHE_FILE, models);
 			return models;
 		},
 	});
@@ -184,7 +230,8 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		const parts = [`${models.length} devpass models`];
+		const parts = [`${models.length} devpass models${fromCache ? " (cached)" : ""}`];
+		if (!apiKey) parts.push(`${API_KEY_ENV} not set — requests will fail`);
 		if (loadError) parts.push(loadError);
 		const balance = formatBalance(await fetchBalance());
 		if (balance) parts.push(balance);
