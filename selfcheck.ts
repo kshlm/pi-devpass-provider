@@ -23,6 +23,24 @@ assert.equal(isChatModel({ ...base, deprecated_at: "2026-01-01" }), false);
 assert.equal(isChatModel({ ...base, deactivated_at: "2026-01-01" }), false);
 assert.equal(isChatModel({ ...base, architecture: { output_modalities: ["image"] } }), false);
 assert.equal(isChatModel({ ...base, architecture: { input_modalities: ["audio"] } }), false);
+// live-catalog shapes (/v1/models, verified 2026-08): embeddings/rerank/tts are excluded
+assert.equal(isChatModel({ ...base, architecture: { output_modalities: ["embedding"] } }), false);
+assert.equal(isChatModel({ ...base, architecture: { output_modalities: ["rerank"] } }), false);
+assert.equal(isChatModel({ ...base, architecture: { output_modalities: ["audio"] } }), false);
+assert.equal(isChatModel({ ...base, id: "custom" }), false, "BYOK placeholder excluded");
+assert.equal(isChatModel({ ...base, id: "auto" }), true, "gateway auto-router kept");
+assert.equal(isChatModel({ ...base, architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] } }), true);
+
+// real catalog pricing strings (gpt-4o-mini)
+assert.deepEqual(
+	toPiModel({
+		id: "gpt-4o-mini",
+		pricing: { prompt: "0.15e-6", completion: "0.6e-6", input_cache_read: "0.075e-6", input_cache_write: "0" },
+	}).cost,
+	{ input: 0.15, output: 0.6, cacheRead: 0.075, cacheWrite: 0 },
+);
+assert.equal(toPerMillion("0"), 0, "free/custom models cost 0");
+assert.equal(toPerMillion("3e-05"), 30, "catalog max $30/M in");
 
 // toPiModel
 const mapped = toPiModel({

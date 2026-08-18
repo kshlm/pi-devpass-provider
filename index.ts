@@ -74,8 +74,9 @@ export function toPerMillion(raw?: string | number): number {
 	return +perMillion.toFixed(6);
 }
 
-/** Chat-capable and not deprecated/deactivated. */
+/** Chat-capable and not deprecated/deactivated. Placeholder entries ("custom") are excluded. */
 export function isChatModel(m: GwModel): boolean {
+	if (m.id === "custom") return false; // BYOK placeholder, not a real model
 	if (m.deprecated_at || m.deactivated_at) return false;
 	const outputs = m.architecture?.output_modalities ?? ["text"]; // missing metadata defaults to text
 	const inputs = m.architecture?.input_modalities ?? ["text"];
@@ -176,8 +177,10 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 		ctx.ui.setStatus(PROVIDER_ID, ctx.ui.theme.fg("dim", parts.join(" · ")));
 	});
 
-	pi.on("turn_end", async (_event, ctx) => {
-		if ((ctx as { model?: { provider?: string } }).model?.provider !== PROVIDER_ID) return;
+	// event.message is the finalized assistant message — typed provider access
+	// (verified live: /v1/models uses per-token sci-notation pricing)
+	pi.on("turn_end", async (event, ctx) => {
+		if (event.message.role !== "assistant" || event.message.provider !== PROVIDER_ID) return;
 		const balance = formatBalance(await fetchBalance());
 		if (balance) ctx.ui.setStatus(PROVIDER_ID, ctx.ui.theme.fg("dim", balance));
 	});
