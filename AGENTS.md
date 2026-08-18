@@ -38,6 +38,10 @@ and via `/devpass`.
 - DevPass plan keys must request **root model ids** (`claude-sonnet-4-5`);
   provider-pinned ids (`anthropic/...`) are unavailable on coding plans.
 - Auth env var: `LLM_GATEWAY_API_KEY` (name used in the gateway's own docs).
+- Base URL override: `LLM_GATEWAY_BASE_URL` (default `https://api.llmgateway.io/v1`),
+  e.g. for a self-hosted gateway or proxy. Applies to requests, catalog fetch,
+  and balance alike — unlike a `models.json` baseUrl override, which only
+  redirects streaming requests. Cache files are keyed per base URL.
 
 ## Behavior notes / gotchas
 

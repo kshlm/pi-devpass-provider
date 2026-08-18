@@ -13,16 +13,24 @@
  * keys cannot use provider-pinned ids) and check /devpass for the balance.
  */
 
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const PROVIDER_ID = "devpass";
-const BASE_URL = "https://api.llmgateway.io/v1";
+const BASE_URL = process.env.LLM_GATEWAY_BASE_URL ?? "https://api.llmgateway.io/v1";
 const API_KEY_ENV = "LLM_GATEWAY_API_KEY";
 const FETCH_TIMEOUT_MS = 15_000;
-const CACHE_FILE = join(homedir(), ".pi", "agent", "cache", "devpass-models.json");
+// per-base-URL cache file: self-hosted gateways must not be served the cloud catalog
+const CACHE_FILE = join(
+	homedir(),
+	".pi",
+	"agent",
+	"cache",
+	`devpass-models-${createHash("sha1").update(BASE_URL).digest("hex").slice(0, 12)}.json`,
+);
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CACHE_V = 1;
 
