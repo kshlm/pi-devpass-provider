@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatBalance, isCacheFresh, isChatModel, isDevpassModel, keyFromAuthEntry, readCacheFrom, resolveBaseUrl, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
+import { formatBalance, isCacheFresh, isChatModel, isDevpassModel, keyFromAuthEntry, readCacheFrom, resolveBaseUrl, shouldFetchCatalog, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
 
 // keyFromAuthEntry — auth.json shapes: oauth ({access}) and manual api_key ({key})
 assert.equal(keyFromAuthEntry({ type: "oauth", access: "llmgtwy_a", refresh: "llmgtwy_a", expires: 1 }), "llmgtwy_a");
@@ -130,6 +130,10 @@ assert.deepEqual(entry.models, sample, "round-trip preserves models");
 assert.ok(isCacheFresh(entry), "fresh just after write");
 assert.ok(!isCacheFresh({ ...entry, fetchedAt: Date.now() - 25 * 3600_000 }), "stale after 24h TTL");
 assert.ok(!isCacheFresh(undefined), "missing entry not fresh");
+assert.equal(shouldFetchCatalog(false, true, undefined), false, "registration refresh stays cache-only");
+assert.equal(shouldFetchCatalog(true, false, entry), false, "fresh cache avoids network");
+assert.equal(shouldFetchCatalog(true, true, entry), true, "forced refresh bypasses cache TTL");
+assert.equal(shouldFetchCatalog(true, false, { ...entry, fetchedAt: Date.now() - 25 * 3600_000 }), true, "stale cache refreshes");
 writeFileSync(cachePath, "{corrupt json");
 assert.equal(await readCacheFrom(cachePath), undefined, "corrupt → undefined");
 writeFileSync(cachePath, JSON.stringify({ v: 99, fetchedAt: Date.now(), models: [] }));

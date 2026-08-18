@@ -206,6 +206,16 @@ export function isCacheFresh(entry: CacheEntry | undefined | null, now = Date.no
 	return !!entry && now - entry.fetchedAt < CACHE_TTL_MS;
 }
 
+/** Network refresh policy: startup/registration must stay cache-only; forced refresh bypasses TTL. */
+export function shouldFetchCatalog(
+	allowNetwork: boolean,
+	force: boolean | undefined,
+	cached: CacheEntry | undefined | null,
+	now = Date.now(),
+): boolean {
+	return allowNetwork && (force === true || !isCacheFresh(cached, now));
+}
+
 export async function readCacheFrom(path: string): Promise<CacheEntry | undefined> {
 	try {
 		const entry = JSON.parse(await readFile(path, "utf8")) as CacheEntry;
@@ -260,9 +270,15 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 		apiKey: `$${API_KEY_ENV}`,
 		api: "openai-completions",
 		models,
-		// `pi update --models` (and /models refresh): re-fetch the live catalog,
-		// replacing the startup list and updating the on-disk cache.
-		async refreshModels({ signal }) {
+		// Registration triggers a cache-only refresh. `pi update --models` passes
+		// allowNetwork + force, while interactive refreshes respect our 24h cache.
+		async refreshModels({ signal, allowNetwork, force }) {
+			if (!allowNetwork) return models;
+			const cached = await readCacheFrom(CACHE_FILE);
+			if (!shouldFetchCatalog(allowNetwork, force, cached)) {
+				if (cached) models = cached.models;
+				return models;
+			}
 			models = await fetchCatalog(signal, currentApiKey());
 			await writeCacheTo(CACHE_FILE, models);
 			return models;
