@@ -30,6 +30,15 @@ assert.equal(isChatModel({ ...base, architecture: { output_modalities: ["audio"]
 assert.equal(isChatModel({ ...base, id: "custom" }), false, "BYOK placeholder excluded");
 assert.equal(isChatModel({ ...base, id: "auto" }), true, "gateway auto-router kept");
 assert.equal(isChatModel({ ...base, architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] } }), true);
+// image-output hybrids excluded (text+image output)
+assert.equal(
+	isChatModel({ ...base, architecture: { input_modalities: ["text"], output_modalities: ["text", "image"] } }),
+	false,
+);
+assert.equal(
+	isChatModel({ ...base, architecture: { input_modalities: ["text", "image"], output_modalities: ["text", "image"] } }),
+	false,
+);
 
 // real catalog pricing strings (gpt-4o-mini)
 assert.deepEqual(

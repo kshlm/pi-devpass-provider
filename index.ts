@@ -80,7 +80,8 @@ export function isChatModel(m: GwModel): boolean {
 	if (m.deprecated_at || m.deactivated_at) return false;
 	const outputs = m.architecture?.output_modalities ?? ["text"]; // missing metadata defaults to text
 	const inputs = m.architecture?.input_modalities ?? ["text"];
-	return outputs.includes("text") && inputs.includes("text");
+	// text-only output: image/audio/video-output models aren't chat-completions usable
+	return outputs.length === 1 && outputs[0] === "text" && inputs.includes("text");
 }
 
 export function toPiModel(m: GwModel) {
@@ -122,10 +123,10 @@ export function formatBalance(d: GwKeyStatus["data"]): string {
 
 // --- Gateway client ---
 
-async function gwFetch<T>(path: string, apiKey: string): Promise<T> {
+async function gwFetch<T>(path: string, apiKey: string, signal?: AbortSignal): Promise<T> {
 	const res = await fetch(`${BASE_URL}${path}`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
-		signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+		signal: signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
 	});
 	if (!res.ok) {
 		throw new Error(`GET ${path} -> HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
@@ -133,20 +134,25 @@ async function gwFetch<T>(path: string, apiKey: string): Promise<T> {
 	return (res.json() as Promise<T>);
 }
 
+/** Live catalog: fetch, filter to chat models, map to pi model configs. */
+async function fetchCatalog(apiKey: string, signal: AbortSignal) {
+	const payload = await gwFetch<{ data: GwModel[] }>("/models?exclude_deprecated=true", apiKey, signal);
+	return (payload.data ?? []).filter(isChatModel).map(toPiModel);
+}
+
 // --- Extension ---
 
 export default async function devpassProvider(pi: ExtensionAPI) {
 	const apiKey = process.env[API_KEY_ENV];
 
-	let models: GwModel[] = [];
+	let models: Awaited<ReturnType<typeof fetchCatalog>> = [];
 	let loadError: string | undefined;
 
 	if (!apiKey) {
 		loadError = `${API_KEY_ENV} not set (key: https://devpass.llmgateway.io)`;
 	} else {
 		try {
-			const payload = await gwFetch<{ data: GwModel[] }>("/models?exclude_deprecated=true", apiKey);
-			models = (payload.data ?? []).filter(isChatModel);
+			models = await fetchCatalog(apiKey, AbortSignal.timeout(FETCH_TIMEOUT_MS));
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : String(e);
 		}
@@ -157,7 +163,15 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 		baseUrl: BASE_URL,
 		apiKey: `$${API_KEY_ENV}`,
 		api: "openai-completions",
-		models: models.map(toPiModel),
+		models,
+		// `pi update --models` (and /models refresh): re-fetch the live catalog,
+		// replacing the startup list. Not persisted — next startup refetches anyway.
+		async refreshModels({ signal }) {
+			const key = process.env[API_KEY_ENV];
+			if (!key) throw new Error(`${API_KEY_ENV} not set (key: https://devpass.llmgateway.io)`);
+			models = await fetchCatalog(key, signal);
+			return models;
+		},
 	});
 
 	async function fetchBalance(): Promise<GwKeyStatus["data"] | undefined> {

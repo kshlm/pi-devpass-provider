@@ -26,8 +26,10 @@ and via `/devpass`.
 
 - Base URL `https://api.llmgateway.io/v1`; OpenAI-compatible →
   `api: "openai-completions"` with Bearer auth (pi's openai API sends it).
-- `GET /v1/models` — full catalog, no pagination. Skip models with
-  `deprecated_at`/`deactivated_at`; keep text→text chat models.
+- `GET /v1/models` — full catalog, no pagination. Keep text-in→text-out chat
+  models only: skip `deprecated_at`/`deactivated_at`, the `custom` BYOK placeholder,
+  and any model with non-text output modalities (image/audio/video/embedding/
+  rerank hybrids aren't chat-completions usable).
   `pricing.prompt`/`completion`/`input_cache_read`/`input_cache_write` are USD
   **per token** in scientific notation (`"5e-6"` = $5/M) — `toPerMillion()`
   converts (values ≥ 0.01 treated as already-$/M guard).
@@ -41,6 +43,9 @@ and via `/devpass`.
 
 - The extension factory is `async`: pi waits for it, so fetched models are
   available during interactive startup and to `pi --list-models`.
+- `refreshModels` is registered on the provider config, so `pi update --models`
+  (and any model refresh) re-fetches the live catalog without a restart. The
+  refreshed list is not persisted — startup refetches anyway.
 - No/invalid key never crashes pi: provider registers with zero models and the
   status line carries the error.
 - Balance refresh: `session_start`, `turn_end` (only when the active model's
