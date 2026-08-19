@@ -93,6 +93,9 @@ interface GwKeyStatus {
 		devPlanCreditsUsed?: string;
 		devPlanCreditsLimit?: string;
 		devPlanCreditsRemaining?: string;
+		devPlanPremiumWeeklyLimit?: string;
+		devPlanPremiumCreditsUsed?: string;
+		devPlanPremiumWeekResetsAt?: string;
 	};
 }
 
@@ -368,6 +371,9 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 					d?.devPlan && d.devPlan !== "none" ? `Dev plan: ${d.devPlan}` : null,
 					balance || null,
 					d?.devPlanCreditsUsed ? `Credits used: $${d.devPlanCreditsUsed}` : null,
+					d?.devPlanPremiumCreditsUsed
+						? `Premium used: $${d.devPlanPremiumCreditsUsed}${d.devPlanPremiumWeeklyLimit ? `/$${d.devPlanPremiumWeeklyLimit}` : ""}${d.devPlanPremiumWeekResetsAt ? ` (resets ${d.devPlanPremiumWeekResetsAt})` : ""}`
+						: null,
 					d?.usage ? `Key usage: $${d.usage}` : null,
 					`Models loaded: ${models.length}`,
 				].filter((l): l is string => l !== null);
