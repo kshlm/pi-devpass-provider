@@ -55,7 +55,7 @@ const CACHE_FILE = join(
 	`devpass-models-${createHash("sha1").update(BASE_URL).digest("hex").slice(0, 12)}.json`,
 );
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const CACHE_V = 1;
+const CACHE_V = 2;
 
 // --- Gateway API shapes (subset of fields we consume) ---
 
@@ -123,14 +123,19 @@ export function isChatModel(m: GwModel): boolean {
 }
 
 export function toPiModel(m: GwModel) {
+	const input = toPerMillion(m.pricing?.prompt);
+	const output = toPerMillion(m.pricing?.completion);
+	const name = m.display_name || m.name || m.id;
+	// LLM Gateway defines Premium from live catalog prices; /models exposes no category field.
+	const premium = input >= 5 || output >= 15;
 	return {
 		id: m.id,
-		name: m.display_name || m.name || m.id,
+		name: premium ? `${name} [P]` : name,
 		reasoning: m.providers?.some((p) => p.reasoning) ?? false,
 		input: (m.providers?.some((p) => p.vision) ? ["text", "image"] : ["text"]) as ("text" | "image")[],
 		cost: {
-			input: toPerMillion(m.pricing?.prompt),
-			output: toPerMillion(m.pricing?.completion),
+			input,
+			output,
 			cacheRead: toPerMillion(m.pricing?.input_cache_read),
 			cacheWrite: toPerMillion(m.pricing?.input_cache_write),
 		},

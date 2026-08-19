@@ -83,13 +83,21 @@ const mapped = toPiModel({
 });
 assert.deepEqual(mapped, {
 	id: "claude-sonnet-4-5",
-	name: "Claude Sonnet 4.5",
+	name: "Claude Sonnet 4.5 [P]",
 	reasoning: true,
 	input: ["text", "image"],
 	cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
 	contextWindow: 200_000,
 	maxTokens: 64_000,
 });
+assert.equal(
+	toPiModel({ id: "input-threshold", display_name: "Input Threshold", pricing: { prompt: "5e-6", completion: "1e-6" } }).name,
+	"Input Threshold [P]",
+);
+assert.equal(
+	toPiModel({ id: "standard", display_name: "Standard", pricing: { prompt: "4.999e-6", completion: "14.999e-6" } }).name,
+	"Standard",
+);
 
 // defaults
 assert.deepEqual(toPiModel({ id: "bare" }), {
@@ -136,7 +144,7 @@ assert.equal(shouldFetchCatalog(true, true, entry), true, "forced refresh bypass
 assert.equal(shouldFetchCatalog(true, false, { ...entry, fetchedAt: Date.now() - 25 * 3600_000 }), true, "stale cache refreshes");
 writeFileSync(cachePath, "{corrupt json");
 assert.equal(await readCacheFrom(cachePath), undefined, "corrupt → undefined");
-writeFileSync(cachePath, JSON.stringify({ v: 99, fetchedAt: Date.now(), models: [] }));
-assert.equal(await readCacheFrom(cachePath), undefined, "schema version mismatch → undefined");
+writeFileSync(cachePath, JSON.stringify({ v: 1, fetchedAt: Date.now(), models: [] }));
+assert.equal(await readCacheFrom(cachePath), undefined, "pre-premium-tag cache invalidated");
 
 console.log("selfcheck passed");
