@@ -2,8 +2,9 @@
  * pi-devpass-provider — LLM Gateway / DevPass model provider for pi.
  *
  * Registers a "devpass" provider (OpenAI-compatible, https://api.llmgateway.io/v1)
- * whose models and $/M rates are fetched from GET /v1/models (24h on-disk cache,
- * stale-fallback on network failure) and surfaces the DevPass credit balance
+ * whose coding models and $/M rates are fetched from GET /v1/models, filtered
+ * to the DevPass coding-plan set (24h on-disk cache, stale-fallback on
+ * network failure) and surfaces the DevPass credit balance
  * (GET /v1/key) in the status line — only while a `devpass/*` model is active.
  *
  * Setup:
@@ -55,7 +56,7 @@ const CACHE_FILE = join(
 	`devpass-models-${createHash("sha1").update(BASE_URL).digest("hex").slice(0, 12)}.json`,
 );
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const CACHE_V = 2;
+const CACHE_V = 3;
 
 // --- Gateway API shapes (subset of fields we consume) ---
 
@@ -69,12 +70,18 @@ interface GwPricing {
 interface GwProviderMapping {
 	reasoning?: boolean;
 	vision?: boolean;
+	tools?: boolean;
+	streaming?: boolean | "only";
+	stability?: string | null;
+	pricing?: GwPricing;
 }
 
 interface GwModel {
 	id: string;
 	name?: string;
 	display_name?: string;
+	free?: boolean | null;
+	stability?: string | null;
 	deprecated_at?: string | null;
 	deactivated_at?: string | null;
 	context_length?: number;
@@ -113,6 +120,43 @@ export function toPerMillion(raw?: string | number): number {
 	if (!Number.isFinite(n) || n <= 0) return 0;
 	const perMillion = n >= 0.01 ? n : n * 1e6;
 	return +perMillion.toFixed(6);
+}
+
+function isUnstable(stability?: string | null): boolean {
+	return stability === "unstable" || stability === "experimental";
+}
+
+/**
+ * Public /v1/models writes missing cachedInputPrice as "0". Official DevPass
+ * gate treats a set field (including "0") as cache support, so "0" here is
+ * indistinguishable from absent. Non-zero cache read/write is the public-API
+ * stand-in; a true "0" cache rate still looks like no cache.
+ */
+export function hasCachedInput(raw?: string): boolean {
+	if (raw === undefined || raw === null || raw === "") return false;
+	const n = Number(raw);
+	return Number.isFinite(n) && n !== 0;
+}
+
+/** One provider mapping can serve coding-plan traffic. */
+export function mappingSupportsCoding(p: GwProviderMapping): boolean {
+	if (isUnstable(p.stability)) return false;
+	return (
+		p.tools === true &&
+		p.streaming !== false &&
+		(hasCachedInput(p.pricing?.input_cache_read) || hasCachedInput(p.pricing?.input_cache_write))
+	);
+}
+
+/**
+ * DevPass coding model: paid, stable, and served by a mapping with tools,
+ * streaming, and cached input. Same gate as GET /v1/chat on a coding plan and
+ * the All tab on https://devpass.llmgateway.io/coding-models.
+ */
+export function isCodingModel(m: GwModel): boolean {
+	if (m.id === "custom" || m.id === "auto") return false;
+	if (m.free || isUnstable(m.stability)) return false;
+	return (m.providers ?? []).some(mappingSupportsCoding);
 }
 
 /** Chat-capable and not deprecated/deactivated. Placeholder entries ("custom") are excluded. */
@@ -194,10 +238,10 @@ async function gwFetch<T>(path: string, apiKey?: string, signal?: AbortSignal): 
 	return (res.json() as Promise<T>);
 }
 
-/** Live catalog: fetch, filter to chat models, map to pi model configs. */
+/** Live catalog: fetch, keep DevPass coding models, map to pi model configs. */
 async function fetchCatalog(signal: AbortSignal, apiKey?: string) {
 	const payload = await gwFetch<{ data: GwModel[] }>("/models?exclude_deprecated=true", apiKey, signal);
-	return (payload.data ?? []).filter(isChatModel).map(toPiModel);
+	return (payload.data ?? []).filter(isCodingModel).map(toPiModel);
 }
 
 // --- Catalog cache (~/.pi/agent/cache/devpass-models.json) ---

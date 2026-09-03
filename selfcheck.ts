@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatBalance, isCacheFresh, isChatModel, isDevpassModel, keyFromAuthEntry, readCacheFrom, resolveBaseUrl, shouldFetchCatalog, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
+import { formatBalance, hasCachedInput, isCacheFresh, isChatModel, isCodingModel, isDevpassModel, keyFromAuthEntry, mappingSupportsCoding, readCacheFrom, resolveBaseUrl, shouldFetchCatalog, toPerMillion, toPiModel, writeCacheTo } from "./index.ts";
 
 // keyFromAuthEntry — auth.json shapes: oauth ({access}) and manual api_key ({key})
 assert.equal(keyFromAuthEntry({ type: "oauth", access: "llmgtwy_a", refresh: "llmgtwy_a", expires: 1 }), "llmgtwy_a");
@@ -36,6 +36,33 @@ assert.equal(toPerMillion("0.05"), 0.05, "already $/M — not multiplied");
 assert.equal(toPerMillion("0"), 0);
 assert.equal(toPerMillion(undefined), 0);
 assert.equal(toPerMillion("not-a-number"), 0);
+
+// isCodingModel — DevPass gate: paid + stable + tools + stream + cache
+const codingMap = { tools: true, streaming: true, pricing: { input_cache_read: "0.1e-6" } };
+assert.equal(isCodingModel({ id: "ok", providers: [codingMap] }), true);
+assert.equal(isCodingModel({ id: "custom", providers: [codingMap] }), false, "BYOK placeholder");
+assert.equal(isCodingModel({ id: "auto", providers: [codingMap] }), false, "auto-router");
+assert.equal(isCodingModel({ id: "free", free: true, providers: [codingMap] }), false);
+assert.equal(isCodingModel({ id: "unstable", stability: "unstable", providers: [codingMap] }), false);
+assert.equal(isCodingModel({ id: "experimental", stability: "experimental", providers: [codingMap] }), false);
+assert.equal(isCodingModel({ id: "no-tools", providers: [{ ...codingMap, tools: false }] }), false);
+assert.equal(isCodingModel({ id: "no-stream", providers: [{ ...codingMap, streaming: false }] }), false);
+assert.equal(isCodingModel({ id: "stream-only", providers: [{ ...codingMap, streaming: "only" }] }), true);
+assert.equal(isCodingModel({ id: "no-cache", providers: [{ tools: true, streaming: true, pricing: { input_cache_read: "0" } }] }), false, "public API 0 = missing cache");
+assert.equal(isCodingModel({ id: "cache-write", providers: [{ tools: true, streaming: true, pricing: { input_cache_write: "3e-6" } }] }), true);
+assert.equal(
+	isCodingModel({
+		id: "one-good",
+		providers: [{ ...codingMap, tools: false }, codingMap],
+	}),
+	true,
+	"one usable mapping is enough",
+);
+assert.equal(isCodingModel({ id: "empty", providers: [] }), false);
+assert.equal(mappingSupportsCoding({ ...codingMap, stability: "unstable" }), false);
+assert.equal(hasCachedInput("0"), false);
+assert.equal(hasCachedInput("0.1e-6"), true);
+assert.equal(hasCachedInput(undefined), false);
 
 // isChatModel
 const base = { id: "m", context_length: 1000, max_output: 100 };
@@ -144,7 +171,7 @@ assert.equal(shouldFetchCatalog(true, true, entry), true, "forced refresh bypass
 assert.equal(shouldFetchCatalog(true, false, { ...entry, fetchedAt: Date.now() - 25 * 3600_000 }), true, "stale cache refreshes");
 writeFileSync(cachePath, "{corrupt json");
 assert.equal(await readCacheFrom(cachePath), undefined, "corrupt → undefined");
-writeFileSync(cachePath, JSON.stringify({ v: 1, fetchedAt: Date.now(), models: [] }));
-assert.equal(await readCacheFrom(cachePath), undefined, "pre-premium-tag cache invalidated");
+writeFileSync(cachePath, JSON.stringify({ v: 2, fetchedAt: Date.now(), models: [] }));
+assert.equal(await readCacheFrom(cachePath), undefined, "pre-coding-filter cache invalidated");
 
 console.log("selfcheck passed");

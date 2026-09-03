@@ -28,10 +28,12 @@ shown as `devpass balance $<balance>` in the status line only while a
 
 - Base URL `https://api.llmgateway.io/v1`; OpenAI-compatible →
   `api: "openai-completions"` with Bearer auth (pi's openai API sends it).
-- `GET /v1/models` — full catalog, no pagination. Keep text-in→text-out chat
-  models only: skip `deprecated_at`/`deactivated_at`, the `custom` BYOK placeholder,
-  and any model with non-text output modalities (image/audio/video/embedding/
-  rerank hybrids aren't chat-completions usable).
+- `GET /v1/models` — full catalog, no pagination. Keep DevPass coding models
+  only (same gate as https://devpass.llmgateway.io/coding-models All tab and
+  the gateway 403): paid, not `unstable`/`experimental`, skip `custom`/`auto`,
+  and at least one provider mapping with tools, streaming, and cached input.
+  Public `/v1/models` writes missing `cachedInputPrice` as `"0"`, so a zero
+  cache read/write is treated as no cache.
   `pricing.prompt`/`completion`/`input_cache_read`/`input_cache_write` are USD
   **per token** in scientific notation (`"5e-6"` = $5/M) — `toPerMillion()`
   converts (values ≥ 0.01 treated as already-$/M guard).
