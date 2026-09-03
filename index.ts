@@ -177,7 +177,7 @@ export function toPiModel(m: GwModel) {
 	const premium = input >= 5 || output >= 15;
 	return {
 		id: m.id,
-		name: premium ? `${name} [P]` : name,
+		name: premium ? `[Premium] ${name}` : name,
 		reasoning: m.providers?.some((p) => p.reasoning) ?? false,
 		input: (m.providers?.some((p) => p.vision) ? ["text", "image"] : ["text"]) as ("text" | "image")[],
 		cost: {

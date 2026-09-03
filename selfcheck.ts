@@ -110,7 +110,7 @@ const mapped = toPiModel({
 });
 assert.deepEqual(mapped, {
 	id: "claude-sonnet-4-5",
-	name: "Claude Sonnet 4.5 [P]",
+	name: "[Premium] Claude Sonnet 4.5",
 	reasoning: true,
 	input: ["text", "image"],
 	cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
@@ -119,7 +119,7 @@ assert.deepEqual(mapped, {
 });
 assert.equal(
 	toPiModel({ id: "input-threshold", display_name: "Input Threshold", pricing: { prompt: "5e-6", completion: "1e-6" } }).name,
-	"Input Threshold [P]",
+	"[Premium] Input Threshold",
 );
 assert.equal(
 	toPiModel({ id: "standard", display_name: "Standard", pricing: { prompt: "4.999e-6", completion: "14.999e-6" } }).name,
