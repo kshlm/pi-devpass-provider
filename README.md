@@ -1,4 +1,4 @@
-# pi-devpass-provider
+# @kshlm/pi-devpass-provider
 
 A [pi](https://github.com/earendil-works/pi-coding-agent) extension that registers a `devpass` model provider backed by [LLM Gateway](https://llmgateway.io) and the [DevPass](https://devpass.llmgateway.io) coding plan.
 
@@ -9,7 +9,7 @@ A [pi](https://github.com/earendil-works/pi-coding-agent) extension that registe
 ## Install
 
 ```sh
-pi install npm:pi-devpass-provider
+pi install npm:@kshlm/pi-devpass-provider
 ```
 
 Or from a local checkout:

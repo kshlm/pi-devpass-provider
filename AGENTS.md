@@ -1,4 +1,4 @@
-# AGENTS.md: pi-devpass-provider
+# AGENTS.md: @kshlm/pi-devpass-provider
 
 pi extension package that registers a `devpass` model provider backed by LLM
 Gateway, following https://llmgateway.io/guides/pi. Models and $/M rates are
@@ -22,7 +22,7 @@ shown as `devpass balance $<balance>` in the status line only while a
   `~/.pi/agent/auth.json`), or set `LLM_GATEWAY_API_KEY` and skip /login, then
   `/model` (pick a `devpass/*` model) and `/devpass`.
 - Install permanently: `pi install /abs/path/to/pi-devpass-provider` (or publish
-  with the `pi-package` keyword and `pi install npm:pi-devpass-provider`).
+  with the `pi-package` keyword and `pi install npm:@kshlm/pi-devpass-provider`).
 
 ## Gateway API facts (verified against docs.llmgateway.io)
 
@@ -56,9 +56,13 @@ shown as `devpass balance $<balance>` in the status line only while a
 
 - The extension factory is `async`: pi waits for it, so fetched models are
   available during interactive startup and to `pi --list-models`.
-- `refreshModels` is registered on the provider config, so `pi update --models`
-  (and any model refresh) re-fetches the live catalog without a restart and
-  rewrites the cache file.
+- `refreshModels` is registered on the provider config. Startup/registration
+  refresh is cache-only (24h TTL owned by the factory); `allowNetwork: true`
+  only arrives from explicit user refreshes (the `/model` selector refresh
+  action, `ctx.modelRegistry.refresh`) and always refetches, rewriting the
+  cache file. `pi update --models` does NOT reach dynamic providers: pi builds
+  that runtime from builtins + models.json without loading extensions
+  (verified against pi 0.84.4 source).
 - No/invalid key never crashes pi: provider registers with zero models and the
   status line carries the error (only while a `devpass` model is active).
 - Status line (`devpass balance $<balance>`) is shown only while the active

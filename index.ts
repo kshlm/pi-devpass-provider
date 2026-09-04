@@ -1,5 +1,5 @@
 /**
- * pi-devpass-provider — LLM Gateway / DevPass model provider for pi.
+ * @kshlm/pi-devpass-provider — LLM Gateway / DevPass model provider for pi.
  *
  * Registers a "devpass" provider (OpenAI-compatible, https://api.llmgateway.io/v1)
  * whose coding models and $/M rates are fetched from GET /v1/models, filtered
@@ -258,16 +258,6 @@ export function isCacheFresh(entry: CacheEntry | undefined | null, now = Date.no
 	return !!entry && now - entry.fetchedAt < CACHE_TTL_MS;
 }
 
-/** Network refresh policy: startup/registration must stay cache-only; forced refresh bypasses TTL. */
-export function shouldFetchCatalog(
-	allowNetwork: boolean,
-	force: boolean | undefined,
-	cached: CacheEntry | undefined | null,
-	now = Date.now(),
-): boolean {
-	return allowNetwork && (force === true || !isCacheFresh(cached, now));
-}
-
 export async function readCacheFrom(path: string): Promise<CacheEntry | undefined> {
 	try {
 		const entry = JSON.parse(await readFile(path, "utf8")) as CacheEntry;
@@ -322,16 +312,15 @@ export default async function devpassProvider(pi: ExtensionAPI) {
 		apiKey: `$${API_KEY_ENV}`,
 		api: "openai-completions",
 		models,
-		// Registration triggers a cache-only refresh. `pi update --models` passes
-		// allowNetwork + force, while interactive refreshes respect our 24h cache.
-		async refreshModels({ signal, allowNetwork, force }) {
+		// Registration/session start triggers a cache-only refresh (the factory
+		// above owns the 24h TTL). allowNetwork=true only arrives from explicit
+		// user refreshes (/model selector, ctx.modelRegistry.refresh) — those
+		// always refetch. `pi update --models` never reaches us: it builds an
+		// extension-free runtime from builtins + models.json.
+		async refreshModels({ signal, allowNetwork }) {
 			if (!allowNetwork) return models;
-			const cached = await readCacheFrom(CACHE_FILE);
-			if (!shouldFetchCatalog(allowNetwork, force, cached)) {
-				if (cached) models = cached.models;
-				return models;
-			}
-			models = await fetchCatalog(signal, currentApiKey());
+			const next = await fetchCatalog(signal, currentApiKey());
+			models = next;
 			await writeCacheTo(CACHE_FILE, models);
 			return models;
 		},
